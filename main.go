@@ -8,6 +8,8 @@ Usage:
 
 Options:
 
+	-allowed-hosts string
+	      Comma-separated list of hosts to allow (e.g. "example.com,example.org")
 	-dry-run
 	      Enable dry run mode
 	-o string
@@ -67,7 +69,7 @@ func safeFileName(s string) string {
 	}, s)
 }
 
-func processHar(reader io.Reader, rootDir string, removeQueryString bool, dryRun bool, verbose bool) (int, error) {
+func processHar(reader io.Reader, rootDir string, removeQueryString bool, dryRun bool, verbose bool, hostAllowlist map[string]bool) (int, error) {
 	var count int
 	decoder := json.NewDecoder(reader)
 
@@ -95,7 +97,7 @@ func processHar(reader io.Reader, rootDir string, removeQueryString bool, dryRun
 			return count, err
 		}
 
-		if err := processEntry(entry, rootDir, removeQueryString, dryRun, verbose); err != nil {
+		if err := processEntry(entry, rootDir, removeQueryString, dryRun, verbose, hostAllowlist); err != nil {
 			return count, err
 		}
 
@@ -110,10 +112,16 @@ func processHar(reader io.Reader, rootDir string, removeQueryString bool, dryRun
 	return count, nil
 }
 
-func processEntry(entry Entry, rootDir string, removeQueryString bool, dryRun bool, verbose bool) error {
+func processEntry(entry Entry, rootDir string, removeQueryString bool, dryRun bool, verbose bool, hostAllowlist map[string]bool) error {
 	parsedUrl, err := url.Parse(entry.Request.URL)
 	if err != nil {
 		return err
+	}
+
+	if len(hostAllowlist) > 0 {
+		if !hostAllowlist[parsedUrl.Host] {
+			return nil
+		}
 	}
 
 	if removeQueryString {
@@ -168,6 +176,7 @@ func main() {
 	var removeQueryString bool
 	var dryRun bool
 	var verbose bool
+	var hostAllowlistStr string
 
 	flag.StringVar(&output, "output", ".", "Output directory")
 	flag.StringVar(&output, "o", ".", "Output directory (short)")
@@ -175,12 +184,20 @@ func main() {
 	flag.BoolVar(&removeQueryString, "r", false, "Remove query string from file path (short)")
 	flag.BoolVar(&dryRun, "dry-run", false, "Enable dry run mode")
 	flag.BoolVar(&verbose, "verbose", false, "Show processing file path")
+	flag.StringVar(&hostAllowlistStr, "allowed-hosts", "", "Comma-separated list of hosts to allow (e.g. \"example.com,example.org\")")
 
 	flag.Parse()
 
 	if flag.NArg() == 0 {
 		fmt.Println("Please provide at least one HAR file to process")
 		os.Exit(1)
+	}
+
+	hostAllowlist := make(map[string]bool)
+	if hostAllowlistStr != "" {
+		for _, host := range strings.Split(hostAllowlistStr, ",") {
+			hostAllowlist[host] = true
+		}
 	}
 
 	for _, harFilePath := range flag.Args() {
@@ -191,7 +208,7 @@ func main() {
 		}
 
 		var count int
-		count, err = processHar(bufio.NewReader(file), output, removeQueryString, dryRun, verbose)
+		count, err = processHar(bufio.NewReader(file), output, removeQueryString, dryRun, verbose, hostAllowlist)
 		_ = file.Close()
 		if err != nil {
 			fmt.Printf("Failed to process HAR file (%d entries processed): %s\n", count, err)
